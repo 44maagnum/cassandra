@@ -1006,10 +1006,14 @@ class RepairRunner implements NotificationListener
     {
         for (long delay = INITIAL_REPAIR_RETRY_DELAY_MILLIS; 
                 delay < MAX_REPAIR_RETRY_DELAY_MILLIS;
-                delay *= 2) {
+                delay *= 2) 
+        {
             cmd = ssProxy.forceRepairAsync(keyspace, isSequential, isLocal, primaryRangeOnly, columnFamilies);
             waitForRepair();
-            if (success) break;
+            if (success) 
+            {
+                break;
+            }
             String message = String.format("[%s] Retrying repair of keyspace '%s' in %d millis", format.format(System.currentTimeMillis()), keyspace, delay);
             out.println(message);
             Thread.sleep(delay);
@@ -1022,10 +1026,14 @@ class RepairRunner implements NotificationListener
     {
         for (long delay = INITIAL_REPAIR_RETRY_DELAY_MILLIS; 
                 delay < MAX_REPAIR_RETRY_DELAY_MILLIS;
-                delay *= 2) {
+                delay *= 2) 
+            {
             cmd = ssProxy.forceRepairRangeAsync(startToken, endToken, keyspace, isSequential, isLocal, columnFamilies);
             waitForRepair();
-            if (success) break;
+            if (success) 
+            {
+                break;
+            }
             String message = String.format("[%s] Retrying repair of keyspace '%s' in %d millis", format.format(System.currentTimeMillis()), keyspace, delay);
             out.println(message);
             Thread.sleep(delay);
