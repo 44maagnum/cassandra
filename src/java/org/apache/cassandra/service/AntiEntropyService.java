@@ -582,6 +582,10 @@ public class AntiEntropyService
      */
     static class RepairSession extends WrappedRunnable implements IEndpointStateChangeSubscriber, IFailureDetectionEventListener
     {
+        private static final long INITIAL_REPAIR_RETRY_DELAY_MILLIS = 1000;
+        private static final long MAX_REPAIR_RETRY_DELAY_MILLIS = 1000*60*5;
+        private static final long RETRY_BACKOFF_FACTOR = 2;
+
         private final String sessionName;
         private final boolean isSequential;
         private final String tablename;
@@ -658,16 +662,42 @@ public class AntiEntropyService
             }
 
             // Checking all nodes are live
+            boolean allEndpointsAlive = true;
+            InetAddress deadEndpoint = null;
+            for (long delay = INITIAL_REPAIR_RETRY_DELAY_MILLIS; delay < MAX_REPAIR_RETRY_DELAY_MILLIS; delay *= RETRY_BACKOFF_FACTOR)
+            {
+                allEndpointsAlive = true;
+                for (InetAddress endpoint : endpoints)
+                {
+                    if (!FailureDetector.instance.isAlive(endpoint))
+                    {
+                        allEndpointsAlive = false;
+                        deadEndpoint = endpoint;
+                        break;
+                    }
+                }
+                if (allEndpointsAlive)
+                {
+                    break;
+                }
+                if (delay * RETRY_BACKOFF_FACTOR < MAX_REPAIR_RETRY_DELAY_MILLIS)
+                {
+                    String message = String.format("Cannot proceed on repair because a neighbor (%s) is dead: waiting %d seconds before retry", deadEndpoint, delay / 1000);
+                    logger.info(String.format("[repair #%s] ", getName()) + message);
+                    Thread.sleep(delay);
+                }
+            }
+
+            if (!allEndpointsAlive)
+            {
+                String message = String.format("Cannot proceed on repair because a neighbor (%s) is dead: session failed", deadEndpoint);
+                differencingDone.signalAll();
+                logger.error(String.format("[repair #%s] ", getName()) + message);
+                throw new IOException(message);
+            }
+
             for (InetAddress endpoint : endpoints)
             {
-                if (!FailureDetector.instance.isAlive(endpoint))
-                {
-                    String message = String.format("Cannot proceed on repair because a neighbor (%s) is dead: session failed", endpoint);
-                    differencingDone.signalAll();
-                    logger.error(String.format("[repair #%s] ", getName()) + message);
-                    throw new IOException(message);
-                }
-
                 if (MessagingService.instance().getVersion(endpoint) < MessagingService.VERSION_11 && isSequential)
                 {
                     logger.info(String.format("[repair #%s] Cannot repair using snapshots as node %s is pre-1.1", getName(), endpoint));
