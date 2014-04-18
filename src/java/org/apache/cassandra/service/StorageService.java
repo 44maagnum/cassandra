@@ -2503,7 +2503,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 logger.info(message);
                 sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.STARTED.ordinal()});
 
-                List<AntiEntropyService.RepairFuture> futures = new ArrayList<AntiEntropyService.RepairFuture>(ranges.size());
+                List<AntiEntropyService.RepairFuture> currentFutures = new ArrayList<AntiEntropyService.RepairFuture>(ranges.size());
                 for (Range<Token> range : ranges)
                 {
                     AntiEntropyService.RepairFuture future;
@@ -2519,7 +2519,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     }
                     if (future == null)
                         continue;
-                    futures.add(future);
+                    currentFutures.add(future);
                     // wait for a session to be done with its differencing before starting the next one
                     try
                     {
@@ -2532,27 +2532,57 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                         sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
                     }
                 }
-                for (AntiEntropyService.RepairFuture future : futures)
+
+                List<AntiEntropyService.RepairFuture> remainingFutures = new ArrayList<AntiEntropyService.RepairFuture>(ranges.size());
+                while (currentFutures.size() > 0)
                 {
-                    try
+                    for (AntiEntropyService.RepairFuture future : currentFutures)
                     {
-                        future.get();
-                        message = String.format("Repair session %s for range %s finished", future.session.getName(), future.session.getRange().toString());
-                        sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_SUCCESS.ordinal()});
+                        try {
+                            future.get(1, TimeUnit.SECONDS);
+                            message = String.format("Repair session %s for range %s finished", future.session.getName(), future.session.getRange().toString());
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_SUCCESS.ordinal()});
+                        }
+                        catch (TimeoutException e)
+                        {
+                            remainingFutures.add(future);
+                        }
+                        catch (ExecutionException e)
+                        {
+                            if (future.remainingRetries > 0)
+                            {
+                                AntiEntropyService.RepairFuture retryFuture = forceTableRepair(future.session.getRange(), keyspace, isSequential, isLocal, columnFamilies);
+                                retryFuture.remainingRetries = future.remainingRetries - 1;
+                                remainingFutures.add(retryFuture);
+
+                                message = String.format("Repair session %s for range %s failed with error %s. Retrying %d more times.", future.session.getName(), future.session.getRange().toString(), e.getCause().getMessage(), future.remainingRetries);
+                                logger.info(message, e);
+                                continue;
+                            }
+                            message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getCause().getMessage());
+                            logger.error(message, e);
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
+                        }
+                        catch (Exception e)
+                        {
+                            if (future.remainingRetries > 0)
+                            {
+                                AntiEntropyService.RepairFuture retryFuture = forceTableRepair(future.session.getRange(), keyspace, isSequential, isLocal, columnFamilies);
+                                retryFuture.remainingRetries = future.remainingRetries - 1;
+                                remainingFutures.add(retryFuture);
+
+                                message = String.format("Repair session %s for range %s failed with error %s. Retrying %d more times.", future.session.getName(), future.session.getRange().toString(), e.getCause().getMessage(), future.remainingRetries);
+                                logger.info(message, e);
+                                continue;
+                            }
+                            message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getMessage());
+                            logger.error(message, e);
+                            sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
+                        }
                     }
-                    catch (ExecutionException e)
-                    {
-                        message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getCause().getMessage());
-                        logger.error(message, e);
-                        sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
-                    }
-                    catch (Exception e)
-                    {
-                        message = String.format("Repair session %s for range %s failed with error %s", future.session.getName(), future.session.getRange().toString(), e.getMessage());
-                        logger.error(message, e);
-                        sendNotification("repair", message, new int[]{cmd, AntiEntropyService.Status.SESSION_FAILED.ordinal()});
-                    }
+                    currentFutures = remainingFutures;
                 }
+
                 sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, AntiEntropyService.Status.FINISHED.ordinal()});
             }
         }, null);

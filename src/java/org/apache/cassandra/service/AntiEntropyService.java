@@ -1067,6 +1067,7 @@ public class AntiEntropyService
     public static class RepairFuture extends FutureTask
     {
         public final RepairSession session;
+        public int remainingRetries = 3;
 
         RepairFuture(RepairSession session)
         {
